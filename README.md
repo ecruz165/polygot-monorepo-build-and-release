@@ -1,128 +1,202 @@
-## 🔹 PRD: Monorepo Build + Deployment Setup
-
-### **Goal**
-
-* Provide a unified developer + CI/CD workflow for a mixed **Node.js** + **Java** monorepo.
-* Ensure **change-aware builds** (only affected modules rebuilt).
-* Maintain **consistent commands** (`make build`, `make run`, `make stop`, `make deploy`) across modules and root.
-* Use **AWS CodeBuild** as the CI/CD runtime.
-* Use **Changesets** to manage **versioning & release notes**.
+Absolutely ✅ — here’s an **updated PRD** for your polyglot monorepo setup with all the enhancements you’ve discussed: **change-aware builds, dependency caching, pre-baked Docker images, Gradle orchestration, and AWS CodeBuild integration**.
 
 ---
 
-### **Architecture Overview**
+# PRD: Polyglot Monorepo CI/CD & Build Optimization
 
-1. **Modules**
+## 1. **Overview**
 
-   * **Node.js modules** → `pnpm` + `changeset` for version bumps.
-   * **Java modules** → `maven` for local dev/build.
+This project manages a **polyglot monorepo** containing both **Node.js** and **Java** modules. The goal is to provide:
 
-2. **Root**
-
-   * **Makefile** provides developer-friendly commands (`make build`, `make run`, etc.).
-   * **Changesets** configured in root (`.changeset/`) for cross-module versioning.
-
-3. **CI/CD**
-
-   * **Gradle** orchestrates pipelines in AWS CodeBuild by delegating to `make`.
-   * Change detection via a **TypeScript CLI tool**:
-
-     * Queries `git diff` against mainline branch.
-     * Produces `changes.json` with impacted modules.
-     * Updates a `results.json` artifact for Gradle & CodeBuild.
+* **Change-aware builds**: Only rebuild modules that changed.
+* **Unified commands**: Developers and CI/CD share `make` targets (`build`, `run`, `stop`, `deploy`, `version`, `release`).
+* **Versioning & release management**: Managed via **Changesets** for Node and synced with Maven for Java.
+* **Optimized CI/CD builds**: Using **custom Docker images**, dependency inspection, and Gradle remote caching.
+* **AWS CodeBuild integration**: Reliable, reproducible, and fast builds with minimal network dependency.
 
 ---
 
-### **Workflow**
+## 2. **Goals**
 
-#### **Local Development**
+1. Provide a **consistent developer experience** across Node and Java modules.
+2. Ensure **incremental builds** (only modules that changed are rebuilt).
+3. Maintain **deterministic and reproducible CI/CD builds**.
+4. Optimize build performance using:
 
-* Developers work in module scope (`pnpm dev`, `mvn spring-boot:run`).
-* At root, use `make` for consistent commands:
+   * Pre-baked Docker images with local dependency repositories.
+   * Remote Gradle cache for Java builds.
+   * Node pnpm store caching.
+5. Maintain a **single orchestration layer** via Make and Gradle.
 
-  ```sh
-  make build   # builds only changed modules
-  make run     # starts services
-  make stop    # stops all running processes
-  make deploy  # local deploy/test script
+---
+
+## 3. **Non-Goals**
+
+* Replacing Maven with Gradle for Java development.
+* Replacing pnpm with Yarn/NPM.
+* Introducing Nx or Turborepo unless specific DX enhancements are required.
+
+---
+
+## 4. **Requirements**
+
+### 4.1 Module-level (Developer Workflows)
+
+* **Node Modules**
+
+  * Managed with `pnpm`.
+  * Scripts: `build`, `start`, `stop`.
+  * Changesets integrated for versioning.
+
+* **Java Modules**
+
+  * Managed with Maven.
+  * Scripts: `clean install`, `spring-boot:run`, `test`.
+  * Versions synced from Changesets when needed.
+
+---
+
+### 4.2 Root-level Orchestration
+
+* Root `Makefile` provides consistent commands:
+
+  * `make build` → builds only changed modules.
+  * `make run` → runs only changed modules.
+  * `make stop` → stops all running modules.
+  * `make deploy` → deploys services.
+  * `make version` → bumps versions (Node via Changesets, Java via Maven).
+  * `make release` → publishes Node packages and deploys Java artifacts.
+
+---
+
+### 4.3 Change-Aware Builds
+
+* **TypeScript CLI (`detectChanges.ts`)**
+
+  * Uses `git diff` to detect changed modules.
+  * Outputs `changes.json` describing affected Node and Java modules.
+  * Optional: Includes **dependency graph awareness** (rebuild dependents of shared modules).
+
+* **Makefile**
+
+  * Reads `changes.json` and executes commands **only for changed modules**.
+
+---
+
+### 4.4 Versioning & Release Management
+
+* **Node**: Uses `@changesets/cli` for version bumping, changelog generation, and publishing.
+* **Java**:
+
+  * Version bumps synchronized via `mvn versions:set` based on Changeset.
+* Root-level commands wrap both ecosystems for CI/CD:
+
+```makefile
+version:
+	pnpm changeset version
+	# sync Java versions
+	for mod in $(jq -r '.javaModules[]' scripts/changes.json); do \
+		mvn -f modules/$$mod/pom.xml versions:set -DnewVersion=$(jq -r '.packages["$$mod"].version' package.json); \
+	done
+```
+
+---
+
+### 4.5 Custom Docker Images
+
+* **Purpose**: Speed up CI/CD builds by pre-baking dependencies.
+* **Features**:
+
+  * Pre-installed: Node.js, pnpm, Java JDK, Maven, Gradle.
+  * Pre-populated dependency caches:
+
+    * Maven `~/.m2/repository`
+    * pnpm store `~/.pnpm-store`
+  * Multi-stage build: final image contains only artifacts (JARs, JS bundles).
+* **Triggering image rebuilds**:
+
+  * Inspect dependency files (`pom.xml`, `package.json`, `pnpm-lock.yaml`).
+  * If they changed → rebuild Docker image.
+  * Optional hash comparison for exact detection:
+
+    ```bash
+    DEP_HASH=$(git hash-object pom.xml package.json pnpm-lock.yaml)
+    ```
+* **Integration with CodeBuild**:
+
+  * Use the image as the base build environment.
+  * Reduces cold-start and network overhead.
+
+---
+
+### 4.6 CI/CD Integration (AWS CodeBuild)
+
+* **Gradle orchestrates all steps**:
+
+  ```groovy
+  task buildAll(type: Exec) { commandLine "make", "build" }
+  task runAll(type: Exec) { commandLine "make", "run" }
+  task versionAll(type: Exec) { commandLine "make", "version" }
+  task releaseAll(type: Exec) { commandLine "make", "release" }
+  build.dependsOn buildAll
   ```
+* **Pipeline Steps**:
 
-#### **Versioning & Releases**
+  1. Detect changes: `detectChanges.ts` → `changes.json`.
+  2. Conditionally build Docker image if dependencies changed.
+  3. `./gradlew buildAll` → builds only changed modules.
+  4. `./gradlew versionAll` → bumps versions.
+  5. `./gradlew releaseAll` → publishes/deploys artifacts.
+* **Caching**:
 
-* Developer runs:
-
-  ```sh
-  pnpm changeset
-  ```
-
-  → Creates a changeset describing version bumps.
-* Root handles publishing (Node.js to npm, Java artifacts to internal registry).
-
-#### **CI/CD (AWS CodeBuild)**
-
-1. **Detect Changes**
-
-   * Run TS CLI:
-
-     ```sh
-     pnpm ts-node scripts/detectChanges.ts --base origin/main --head HEAD
-     ```
-   * Writes `changes.json`:
-
-     ```json
-     {
-       "changedModules": ["service-a", "service-b"]
-     }
-     ```
-
-2. **Build Phase**
-
-   ```sh
-   ./gradlew build
-   ```
-
-   → Gradle calls `make build`, which uses `changes.json` to only build affected modules.
-
-3. **Deploy Phase**
-
-   ```sh
-   ./gradlew deploy
-   ```
-
-   → Runs module-specific deploy scripts (ECS, Lambda, or EKS).
+  * Gradle remote cache (S3) for Java tasks.
+  * pnpm store cached via CodeBuild layer or ECR image.
 
 ---
 
-### **Optional Comparison: Nx / Turborepo**
+### 4.7 Optional Enhancements
 
-* **Nx / Turborepo give you:**
-
-  * Built-in change detection.
-  * Distributed caching across CI/CD runners.
-  * Dependency graph visualization.
-
-* **Why we might skip them here:**
-
-  * We already have **custom change detection**.
-  * AWS CodeBuild has limited benefit from distributed caching (no shared cache by default).
-  * Adds another abstraction devs must learn.
-
-* **Verdict:**
-  Stick with `make + gradle + changesets`. Add Nx/Turborepo only if:
-
-  * You want **visual dependency graphing**.
-  * Or caching is a bottleneck and you configure a **remote cache backend** (like S3 or Redis).
+* Dependency graph awareness for rebuilds of dependent modules.
+* Scheduled rebuilds of Docker image to refresh dependency cache.
+* Multi-stage Docker images for deployment.
+* Remote caching for Node tasks if needed in future (Turborepo optional).
 
 ---
 
-### **Deliverables**
+## 5. **Acceptance Criteria**
 
-* [ ] Root `Makefile` with consistent commands.
-* [ ] Gradle build scripts wrapping `make`.
-* [ ] TS CLI tool for git-based change detection.
-* [ ] Changesets configuration (`.changeset/config.json`).
-* [ ] AWS CodeBuild spec (`buildspec.yml`) wired to Gradle.
+* ✅ Local developers can run `make build/run/stop/deploy` consistently.
+* ✅ Only changed modules are rebuilt.
+* ✅ Versions are bumped consistently via Changesets + Maven sync.
+* ✅ Docker image caching speeds up builds; rebuilt only when dependencies change.
+* ✅ CI/CD pipelines in AWS CodeBuild use Gradle orchestration and leverage remote caching.
+* ✅ Node and Java modules produce deployable artifacts.
 
 ---
 
-👉 Do you want me to draft the actual **`buildspec.yml` for AWS CodeBuild** showing how Gradle + make + changesets plug in together? That’d make the PRD more implementation-ready.
+## 6. **Directory / Artifact Considerations**
+
+* `/modules` → Node and Java projects.
+* `/scripts/detectChanges.ts` → change detection script.
+* `/Makefile` → developer and CI commands.
+* `/build.gradle` → Gradle orchestration.
+* `/docker/` → Dockerfiles for pre-baked images.
+* `/scripts/changes.json` → output from `detectChanges.ts`.
+* `.changeset/` → Changesets versioning info.
+
+---
+
+This PRD now captures **all enhancements discussed**:
+
+* Change-aware builds
+* Versioning across Node + Java
+* Pre-baked Docker images with dependency caches
+* Conditional image rebuild based on dependency files
+* Gradle orchestration
+* AWS CodeBuild integration
+
+---
+
+If you want, I can next **draw a visual workflow diagram** showing **Docker build, change detection, Gradle orchestration, Makefile execution, and CodeBuild steps** — that usually makes it easier to share with stakeholders.
+
+Do you want me to do that?
