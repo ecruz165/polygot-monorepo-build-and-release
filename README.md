@@ -181,6 +181,7 @@ version:
 * `.changeset/` → Changesets versioning info.
 
 ## Pipeline
+``` 
 ---
 
         +----------------------+
@@ -258,4 +259,4 @@ version:
 
 
 ---
-
+```
