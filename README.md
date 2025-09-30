@@ -180,19 +180,82 @@ version:
 * `/scripts/changes.json` → output from `detectChanges.ts`.
 * `.changeset/` → Changesets versioning info.
 
+## Pipeline
 ---
 
-This PRD now captures **all enhancements discussed**:
+        +----------------------+
+        |  Developer Commits   |
+        |  (git push / PR)     |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        | Detect Changes       |
+        | scripts/detectChanges.ts
+        | Outputs changes.json |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        | Check Dependency Files|
+        | pom.xml, package.json |
+        | pnpm-lock.yaml       |
+        +----------+-----------+
+                   |
+           +-------+-------+
+           |               |
+           v               v
++----------------+   +-----------------+
+| Dependencies   |   | No Dep Changes  |
+| Changed?       |   |                 |
++-------+--------+   +-----------------+
+        |                        |
+        v                        v
++------------------------+       |
+| Build Custom Docker    |       |
+| Image with pre-baked   |       |
+| Maven + pnpm caches    |       |
++-----------+------------+       |
+            |                    |
+            v                    v
+        +----------------------------+
+        | Push Image to AWS ECR      |
+        +------------+---------------+
+                     |
+                     v
+        +----------------------------+
+        | Gradle Orchestration       |
+        | (calls Makefile commands)  |
+        +------------+---------------+
+                     |
+                     v
+        +----------------------------+
+        | Makefile executes:         |
+        | - build (change-aware)     |
+        | - run (only changed)       |
+        | - stop                     |
+        | - version (Changesets +    |
+        |   Maven sync)              |
+        | - release (Node + Java)    |
+        +------------+---------------+
+                     |
+                     v
+        +----------------------------+
+        | AWS CodeBuild Executes      |
+        | - Uses Custom Docker Image  |
+        | - Gradle + Make tasks       |
+        | - Remote Gradle cache (S3) |
+        | - pnpm cache (CodeBuild)   |
+        +----------------------------+
+                     |
+                     v
+        +----------------------------+
+        | Deploy Artifacts           |
+        | - Node: npm registry       |
+        | - Java: Maven repo / ECS   |
+        | - Docker containers (optional)|
+        +----------------------------+
 
-* Change-aware builds
-* Versioning across Node + Java
-* Pre-baked Docker images with dependency caches
-* Conditional image rebuild based on dependency files
-* Gradle orchestration
-* AWS CodeBuild integration
 
 ---
 
-If you want, I can next **draw a visual workflow diagram** showing **Docker build, change detection, Gradle orchestration, Makefile execution, and CodeBuild steps** — that usually makes it easier to share with stakeholders.
-
-Do you want me to do that?
