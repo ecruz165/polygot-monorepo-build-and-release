@@ -1,9 +1,3 @@
-Got it — since you’re leaning toward **AWS CodeBuild** for CI/CD, using `make` + `gradle` + `changesets` already gives you most of the value that tools like **Nx** or **Turborepo** provide (task orchestration, caching, change awareness). The big question is whether you need their **extra developer-experience features** (like distributed caching, dependency graph visualization, automatic task scheduling).
-
-Here’s how it stacks up:
-
----
-
 ## 🔹 PRD: Monorepo Build + Deployment Setup
 
 ### **Goal**
